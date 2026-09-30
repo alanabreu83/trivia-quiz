@@ -859,7 +859,7 @@ async function startQuiz(cat, difficulty) {
     if (!db) db = await claude.use('db');
     if (!sample) throw new Error('Quiz engine unavailable.');
 
-    // Load previously seen question texts for this category
+    // Load previously seen questions
     const seenList = await loadSeenQuestions(cat.id);
     const seenCount = seenList.length;
 
@@ -868,60 +868,42 @@ async function startQuiz(cat, difficulty) {
         ? `Avoiding ${seenCount} question${seenCount !== 1 ? 's' : ''} you've already seen`
         : 'Selecting questions from a pool of 1000+';
 
-    // Build exclusion block for the prompt
     const exclusionBlock = seenList.length > 0
-      ? `\n\nDO NOT use any of these questions — they have already been shown to this user:\n${seenList.map(q => `- ${q}`).join('\n')}`
+      ? `\n\nDO NOT use any of these questions — they have already been shown:\n${seenList.map(q => `- ${q}`).join('\n')}`
       : '';
 
-    const geoExtra = CATEGORY_EXTRA[cat.id] ? `\n\n${CATEGORY_EXTRA[cat.id]}` : '';
+    const geoExtra = cat.id === 'geography' ? `\n\nGEOGRAPHY RULES: ONLY ask about specific named places (cities, countries, mountains, rivers, capitals, landmarks). NEVER ask questions that define geographical terms or concepts.` : '';
 
     const difficultyInstructions = {
-      easy:   'ALL 10 questions must be EASY — well-known facts, common knowledge, things most people would know.',
+      easy:   'ALL 10 questions must be EASY — well-known facts most people would know.',
       medium: 'ALL 10 questions must be MEDIUM difficulty — requires genuine knowledge but not specialist expertise.',
-      hard:   'ALL 10 questions must be HARD — obscure, specific, or technical questions that will challenge even knowledgeable players.',
-      mixed:  'Spread difficulty across the 10 questions: approximately 3 easy, 4 medium, and 3 hard questions, in random order.'
+      hard:   'ALL 10 questions must be HARD — obscure, specific questions that challenge even knowledgeable players.',
+      mixed:  'Mix difficulty: approximately 3 easy, 4 medium, and 3 hard questions in random order.'
     };
 
-    const prompt = `You are a trivia question generator with a pool of over 1000 unique ${cat.name} questions.
-
-Generate exactly 10 NEW trivia questions about ${cat.name} that have NEVER appeared in any prior quiz for this user.${geoExtra}
+    const prompt = `Generate exactly 10 trivia questions about ${cat.name}.${geoExtra}
 
 DIFFICULTY: ${difficultyInstructions[currentDifficulty]}
 
 Rules:
-- Strictly follow the difficulty level specified above for every question
 - Cover diverse subtopics within ${cat.name}
 - Each question has exactly 4 answer choices
 - Exactly one answer is correct
-- Randomly vary which position (0, 1, 2, or 3) holds the correct answer across questions
-- Include a brief 1-sentence explanation of the correct answer
-- Generate questions that are genuinely different in topic and phrasing from each other${exclusionBlock}
+- Randomly vary which position (0,1,2,3) holds the correct answer
+- Questions must be genuinely different from each other${exclusionBlock}
 
-Return ONLY valid JSON, no markdown, no backticks, no extra text:
-{
-  "questions": [
-    {
-      "question": "...",
-      "answers": ["...", "...", "...", "..."],
-      "correct": 0,
-      "explanation": "..."
-    }
-  ]
-}
+Return ONLY valid JSON with no markdown or backticks:
+{"questions":[{"question":"...","answers":["...","...","...","..."],"correct":0}]}
 
-The "correct" field is the 0-based index of the correct answer in the answers array.`;
+"correct" is the 0-based index of the correct answer.`;
 
-    const result = await sample.json([{ role: 'user', content: prompt }], {
-      modelTier: 'default'
-    });
+    const result = await sample.json([{ role: 'user', content: prompt }], { modelTier: 'default' });
 
     if (!result || !result.questions || result.questions.length < 5) {
       throw new Error('Received incomplete question data. Please try again.');
     }
 
     questions = result.questions.slice(0, 10);
-
-    // Save these new questions to db so they won't repeat
     const newQTexts = questions.map(q => q.question);
     await saveSeenQuestions(cat.id, newQTexts, seenList);
 
